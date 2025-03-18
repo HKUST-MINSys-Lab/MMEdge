@@ -3,29 +3,30 @@ import torch
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
+from data.utils import CenterCrop, RandomCrop, HorizontalFlip, ColorNormalize
 
-def load_label_map(label_file, max_words=None):
+
+def load_label_map(label_file):
     """ 加载标签映射 """
     label_df = pd.read_csv(label_file, sep='\t', header=None, names=['word', 'label'])
     label_map = {row['word']: row['label'] for _, row in label_df.iterrows()}
-    if max_words is not None:
-        selected_words = list(label_map.keys())[:max_words]
-        label_map = {word: label_map[word] for word in selected_words}
     return label_map
 
 class LipreadingDataset(Dataset):
-    def __init__(self, root_dir, label_file, mode='train', max_words=None):
+    def __init__(self, root_dir, label_file, mode='train', video_transform=None, sample_cnt=None):
         """
         Args:
             root_dir (str): 数据根目录 (/data/rxhuang/lipreading_feature)
             label_file (str): 词汇和标签的映射文件 (select_words.txt)
             mode (str): 选择 'train', 'val', 'test'
-            max_words (int, optional): 仅在训练集选择前 max_words 个单词
+            sample_cnt (int, optional): 仅在训练集选择前 sample_cnt 个单词
         """
         assert mode in ['train', 'val', 'test'], "mode 必须是 'train', 'val' 或 'test'"
         self.root_dir = root_dir
         self.mode = mode
-        self.label_map = load_label_map(label_file, max_words)
+        self.video_transform = video_transform
+        self.sample_cnt = sample_cnt
+        self.label_map = load_label_map(label_file)
         self.data = self._load_data()
 
     def _load_data(self):
@@ -37,7 +38,11 @@ class LipreadingDataset(Dataset):
             if not os.path.exists(video_path) or not os.path.exists(audio_path):
                 continue
             
-            for file in os.listdir(video_path):
+            if self.sample_cnt is None:
+                samples = os.listdir(video_path)
+            else:
+                samples = os.listdir(video_path)[:self.sample_cnt]
+            for file in samples:
                 if file.endswith('.npz'):
                     video_file = os.path.join(video_path, file)
                     audio_file = os.path.join(audio_path, file)
@@ -54,9 +59,17 @@ class LipreadingDataset(Dataset):
         # 加载 npz 数据
         video_data = np.load(video_file)['data'].astype(np.float32) 
         audio_data = np.load(audio_file)['data'].astype(np.float32)
+
+        transformed_frames = []
+        if self.video_transform:
+            for frame in video_data:
+                transformed_frame = self.video_transform(frame)
+                transformed_frames.append(transformed_frame)
+            video_tensor = torch.stack(transformed_frames)
+        else:
+            video_tensor = torch.from_numpy(video_data)
         
         # 转换为 PyTorch Tensor
-        video_tensor = torch.from_numpy(video_data)  # 形状: (T, C, H, W)
         audio_tensor = torch.from_numpy(audio_data)  # 形状: (C, 音频时间步)
         label_tensor = torch.tensor(label, dtype=torch.long)
         
@@ -66,5 +79,7 @@ class LipreadingDataset(Dataset):
 # dataset = LipreadingDataset(root_dir='/data/rxhuang/lipread_feature',
 #                             label_file='selected_words.txt',
 #                             mode='train',
-#                             max_words=5)
+#                             sample_cnt=None)
+
+# print(f"数据集大小: {len(dataset)}")
 

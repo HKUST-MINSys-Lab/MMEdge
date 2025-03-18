@@ -133,7 +133,8 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, cdiv=cdiv, n_seg=num_segments)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, cdiv=cdiv, n_seg=num_segments)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, cdiv=cdiv, n_seg=num_segments)
-        self.avgpool = nn.AvgPool2d(7, stride=1)
+        # self.avgpool = nn.AvgPool2d(7, stride=1)
+        self.avgpool = nn.AvgPool2d((2, 2))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for name, m in self.named_modules():
@@ -200,28 +201,17 @@ class ResNet(nn.Module):
  
         return x
     
-
-class TSN(nn.Module):
-    def __init__(self, model, feature_dim, num_class):
-        super(TSN, self).__init__()
-        self.base_model = model
+    
+class Video_ResNet_2D(nn.Module):
+    def __init__(self, pretrain=True, feature_dim=1000, num_class=50):
+        super(Video_ResNet_2D, self).__init__()
+        self.base_model = resnet50(pretrain)
         # 用一维卷积提取时序信息
         self.conv_temporal = nn.Sequential(
             nn.Conv1d(feature_dim, 512, kernel_size=3, padding=1),
             nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(512, 256, kernel_size=3, padding=1),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(256, 128, kernel_size=3, padding=1),
-            nn.BatchNorm1d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(128, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool1d(1)  # 将时序维度降为1
         )
-        self.fc = nn.Linear(64, num_class)
 
     def forward(self, x):
         # x 形状: (B, T, C, H, W)
@@ -233,9 +223,9 @@ class TSN(nn.Module):
         temporal_feat = temporal_feat.permute(0, 2, 1)
         conv_out = self.conv_temporal(temporal_feat)  # (B, 128, 1)
         conv_out = conv_out.squeeze(2)  # (B, 128)
-        out = self.fc(conv_out)
-        return out
-    
+        
+        return conv_out
+
 
 class SlowFast2D_Cache(nn.Module):
     def __init__(self, base_model, feature_dim, num_class, alpha=4):
