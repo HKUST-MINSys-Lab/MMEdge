@@ -4,7 +4,9 @@ import math
 import torch.utils.model_zoo as model_zoo
 import torchvision.models as models
 
-from models.Calibrator3D import GC_L33Dnb, GC_T13Dnb, GC_S23DDnb, GC_CLLDnb
+from models.utils.Calibrator3D import GC_L33Dnb, GC_T13Dnb, GC_S23DDnb, GC_CLLDnb
+from torchvision.models.video import r3d_18
+
 
 __all__ = ['ResNet', 'resnet50', 'resnet101','resnet152']
 
@@ -17,6 +19,37 @@ model_urls = {
 }
 
 
+class BasicBlock3D(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, alpha, beta, stride=1, downsample=None, use_ef=False, cdiv=8, loop_id=0):
+        super(BasicBlock3D, self).__init__()
+        self.conv1 = nn.Conv3d(inplanes, planes, kernel_size=3, stride=(1, stride, stride), padding=1, bias=False)
+        self.bn1 = nn.BatchNorm3d(planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv3d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm3d(planes)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+    
 
 class Bottleneck(nn.Module):
     expansion = 4
@@ -135,7 +168,8 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], alpha, beta, stride=2, cdiv=cdiv)
         self.layer3 = self._make_layer(block, 256, layers[2], alpha, beta, stride=2, cdiv=cdiv)
         self.layer4 = self._make_layer(block, 512, layers[3], alpha, beta, stride=2, cdiv=cdiv)
-        self.avgpool = nn.AvgPool2d(7, stride=1)
+        # self.avgpool = nn.AvgPool2d(7, stride=1)
+        self.avgpool = nn.AvgPool2d((2, 2))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for name, m in self.named_modules():
@@ -198,22 +232,49 @@ class ResNet(nn.Module):
         return x
 
 
-class GST(nn.Module):
+class Video_Classification(nn.Module):
+    def __init__(self, pretrain=True, feature_dim=512, num_classes=50):
+        super(Video_Classification, self).__init__()
+        self.base_model = resnet50(4, 2, pretrain=pretrain, num_classes=1000, cdiv=4)
+        self.feature_layer = nn.Sequential(
+            nn.Linear(1000, feature_dim),
+            nn.ReLU(inplace=True)
+        )
+        # self.fc = nn.Linear(feature_dim, num_classes)
 
-    def __init__(self, model, feature_dim, num_class):
-        super(GST, self).__init__()
-        self.base_model = model
-        self.fc = nn.Linear(feature_dim, num_class)
-    
     def forward(self, x):
-        B, T, C, H, W = x.shape
+        # x 形状: (B, T, C, H, W)
         x = x.permute(0, 2, 1, 3, 4)
+        B, C, T, H, W = x.shape
         x = self.base_model(x)
         x = x.view(B, T, -1)
         x = x.mean(dim=1)  # (B, 1000)
-        x = self.fc(x)
+        x = self.feature_layer(x)
+        # x = self.fc(x)
         return x
-    
+
+
+
+
+class Video_Encoder(nn.Module):
+    def __init__(self, pretrain=False, feature_dim=512, num_classes=50):
+        super(Video_Encoder, self).__init__()
+        self.base_model = resnet18(4, 2, pretrain=pretrain, num_classes=1000, cdiv=4)
+        self.feature_layer = nn.Sequential(
+            nn.Linear(1000, feature_dim),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        # x 形状: (B, T, C, H, W)
+        x = x.permute(0, 2, 1, 3, 4)
+        B, C, T, H, W = x.shape
+        x = self.base_model(x)
+        x = x.view(B, T, -1)
+        x = x.mean(dim=1)  # (B, 1000)
+        x = self.feature_layer(x)
+        return x
+
 
 def resnet50(alpha, beta, pretrain=False, **kwargs):
     """Constructs a ResNet-50 based model.
@@ -250,3 +311,17 @@ def resnet101(alpha, beta ,**kwargs):
     model.load_state_dict(checkpoint,strict = False)
 
     return model
+
+
+def resnet18(alpha, beta, pretrain=False, **kwargs):
+    """Constructs a ResNet-18 3D model."""
+    model = ResNet(BasicBlock3D, [2, 2, 2, 2], alpha, beta, **kwargs)
+    if pretrain:
+        checkpoint = model_zoo.load_url(model_urls['resnet18'])
+        layer_name = list(checkpoint.keys())
+        for ln in layer_name:
+            if 'conv' in ln or 'downsample.0.weight' in ln:
+                checkpoint[ln] = checkpoint[ln].unsqueeze(2)
+        model.load_state_dict(checkpoint, strict=False)
+    return model
+
