@@ -24,7 +24,7 @@ Enables early inference termination by leveraging faster modalities’ features,
 ## Citation
 Please consider to cite our paper if you use the code or data in your research project.
 
-```la
+```bibtex
 @article{huang2025mmedge,
   title={MMEdge: Accelerating On-device Multimodal Inference via Pipelined Sensing and Encoding},
   author={Huang, Runxi and Yu, Mingxuan and Tsoi, Mingyu and Ouyang, Xiaomin},
