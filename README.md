@@ -20,3 +20,15 @@ Dynamically selects the optimal sensing and model configurations under latency c
 
 - **Cross-Modal Speculative Skipping**:
 Enables early inference termination by leveraging faster modalities’ features, skipping redundant processing of slower modalities when confidence is sufficient.
+
+## Citation
+Please consider to cite our paper if you use the code or data in your research project.
+
+```la
+@article{huang2025mmedge,
+  title={MMEdge: Accelerating On-device Multimodal Inference via Pipelined Sensing and Encoding},
+  author={Huang, Runxi and Yu, Mingxuan and Tsoi, Mingyu and Ouyang, Xiaomin},
+  journal={arXiv preprint arXiv:2510.25327},
+  year={2025}
+}
+```
