@@ -1,0 +1,11 @@
+numpy==1.23.5
+numpy==1.24.3
+opencv_python==4.10.0.84
+pandas==2.0.3
+psutil==5.9.8
+scipy==1.16.3
+soundfile==0.12.1
+thop==0.1.1.post2209072238
+torch==2.4.0
+torchvision==0.19.0
+v4l2py==3.0.0

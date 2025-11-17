@@ -1,6 +1,6 @@
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = '2'
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,228 +9,293 @@ import torchvision.transforms.v2 as T
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torchvision import transforms
+
 from data.lipreading_dataset import LipreadingDataset
-from models.Video_ResNet import Video_ResNet_P3D_Encoder, get_resnet_backbone
-from models.Audio_ResNet import AudioEncoder, AudioModelBaselineEncoder, AudioModelLightweightEncoder
-from models.Fusion import MultiModalFusion
 from models.ResNet_3D import Video_Encoder
-from models.Video_ResNet_Ablation import Video_ResNet_Baseline_Encoder, Video_ResNet_P3D_Without_Shift
+from models.Audio_ResNet import (
+    AudioEncoder,
+    AudioModelLightweightEncoder,
+)
+from models.Fusion import MultiModalFusion
 
 
+# -----------------------------------------------------
+# Weight Init
+# -----------------------------------------------------
 def init_weights(m):
     if isinstance(m, nn.Linear):
-        nn.init.orthogonal_(m.weight)  # 正交初始化更适合深层网络
+        nn.init.orthogonal_(m.weight)
         nn.init.constant_(m.bias, 0)
     elif isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
     elif isinstance(m, nn.BatchNorm1d):
         nn.init.constant_(m.weight, 1)
         nn.init.constant_(m.bias, 0)
 
 
-# 训练函数
-def train_epoch(models, train_loader, criterion, optimizer, device):
+# -----------------------------------------------------
+# Train One Epoch
+# -----------------------------------------------------
+def train_epoch(models, loader, criterion, optimizer, device):
     audio_model, video_model, fusion_model = models
-    video_model.train()
+
     audio_model.train()
+    video_model.train()
     fusion_model.train()
-    
+
     running_loss = 0.0
     correct = 0
     total = 0
 
-    progress_bar = tqdm(train_loader, desc="Training", unit="batch")
+    progress = tqdm(loader, desc="Training", unit="batch")
 
-    for video_inputs, audio_inputs, labels in progress_bar:
-        video_inputs, audio_inputs, labels = video_inputs.to(device), audio_inputs.to(device), labels.to(device)
+    for video_inputs, audio_inputs, labels in progress:
+        video_inputs = video_inputs.to(device)
+        audio_inputs = audio_inputs.to(device)
+        labels = labels.to(device)
 
-        # 梯度清零
         optimizer.zero_grad()
 
-        with torch.no_grad():
-            video_feature = video_model(video_inputs)
-            audio_feature = audio_model(audio_inputs)
-        video_feature = video_model(video_inputs)
-        audio_feature = audio_model(audio_inputs)
-        outputs = fusion_model(video_feature, audio_feature)
-        
-        # 计算损失（这里 fusion_criterion 主要用于最终分类任务）
+        # feature extraction
+        video_feat = video_model(video_inputs)
+        audio_feat = audio_model(audio_inputs)
+
+        outputs = fusion_model(video_feat, audio_feat)
+
         loss = criterion(outputs, labels)
         loss.backward()
-
-        # 反向传播 + 更新权重
         optimizer.step()
 
-        total_grad = 0
+        running_loss += loss.item() * labels.size(0)
 
-        # 计算 loss
-        running_loss += loss.item() * labels.size(0)  # 计算整个 batch 的 loss 总和
-
-        # 计算 accuracy
-        _, predicted = torch.max(outputs, 1)
-        correct += (predicted == labels).sum().item()
+        _, preds = outputs.max(1)
+        correct += (preds == labels).sum().item()
         total += labels.size(0)
 
-        # 计算总体累计 loss 和 accuracy（基于所有 batch）
-        current_loss = running_loss / total
-        current_acc = (correct / total) * 100.0  # 计算所有已处理样本的累计准确率
+        progress.set_postfix(
+            loss=f"{running_loss/total:.4f}",
+            acc=f"{100 * correct/total:.2f}%"
+        )
 
-        # 更新 tqdm 进度条
-        progress_bar.set_postfix(loss=f"{current_loss:.4f}", acc=f"{current_acc:.2f}%")
-
-    train_loss = running_loss / total
-    train_acc = correct / total * 100.0
-    return train_loss, train_acc
+    return running_loss / total, 100 * correct / total
 
 
-def evaluate(models, val_loader, criterion, device):
+# -----------------------------------------------------
+# Evaluation
+# -----------------------------------------------------
+def evaluate(models, loader, criterion, device):
     audio_model, video_model, fusion_model = models
-    video_model.eval()
+
     audio_model.eval()
+    video_model.eval()
     fusion_model.eval()
 
     running_loss = 0.0
     correct = 0
     total = 0
 
-    progress_bar = tqdm(val_loader, desc="Validating", unit="batch")
+    progress = tqdm(loader, desc="Validating", unit="batch")
 
     with torch.no_grad():
-        for video_inputs, audio_inputs, labels in progress_bar:
-            video_inputs, audio_inputs, labels = video_inputs.to(device), audio_inputs.to(device), labels.to(device)
-            
-            video_feature = video_model(video_inputs)
-            audio_feature = audio_model(audio_inputs)
-            outputs = fusion_model(video_feature, audio_feature)
-            loss = criterion(outputs, labels)
+        for video_inputs, audio_inputs, labels in progress:
+            video_inputs = video_inputs.to(device)
+            audio_inputs = audio_inputs.to(device)
+            labels = labels.to(device)
 
+            video_feat = video_model(video_inputs)
+            audio_feat = audio_model(audio_inputs)
+            outputs = fusion_model(video_feat, audio_feat)
+
+            loss = criterion(outputs, labels)
             running_loss += loss.item() * labels.size(0)
-            _, predicted = torch.max(outputs, 1)
-            correct += (predicted == labels).sum().item()
+
+            _, preds = outputs.max(1)
+            correct += (preds == labels).sum().item()
             total += labels.size(0)
 
-            # 计算所有 batch 的累计 loss 和 accuracy
-            current_loss = running_loss / total
-            current_acc = (correct / total) * 100.0
+            progress.set_postfix(
+                loss=f"{running_loss/total:.4f}",
+                acc=f"{100 * correct/total:.2f}%"
+            )
 
-            # 更新 tqdm 进度条
-            progress_bar.set_postfix(loss=f"{current_loss:.4f}", acc=f"{current_acc:.2f}%")
-
-    val_loss = running_loss / total
-    val_acc = correct / total * 100.0
-    return val_loss, val_acc
+    return running_loss / total, 100 * correct / total
 
 
-# 训练循环
-def train(models, train_loader, val_loader, criterion, optimizer, scheduler, device, epochs=10, save_path=None):
-    audio_model, video_model, fusion_model = models
-    best_val_acc = 0.0
+# -----------------------------------------------------
+# Full Training Loop
+# -----------------------------------------------------
+def train(models, train_loader, val_loader, criterion,
+          optimizer, scheduler, device, epochs, save_path):
+
+    best_acc = 0.0
+
     for epoch in range(epochs):
+        print(f"\n===== Epoch [{epoch+1}/{epochs}] =====")
+
         train_loss, train_acc = train_epoch(models, train_loader, criterion, optimizer, device)
         val_loss, val_acc = evaluate(models, val_loader, criterion, device)
 
-        # 保存最佳模型
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if val_acc > best_acc:
+            best_acc = val_acc
             torch.save(models[-1].state_dict(), save_path)
-            print(f"Best model saved with accuracy: {best_val_acc:.2f}%")
-           
-        print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
-              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% | Best Acc: {best_val_acc:.2f}%")
-        
+            print(f"✔ Best Fusion Model Saved: {best_acc:.2f}%")
+
+        print(
+            f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
+            f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% | "
+            f"Best Acc: {best_acc:.2f}%"
+        )
+
         scheduler.step()
 
     print("\nTraining Complete.")
-    
 
-if __name__ == '__main__':
+
+# -----------------------------------------------------
+# Audio Backbone Loader
+# -----------------------------------------------------
+def build_audio_model(name, num_classes):
+    if name == "small":
+        return AudioModelLightweightEncoder()
+    elif name == "medium":
+        return AudioEncoder(size="medium", num_classes=num_classes)
+    elif name == "large":
+        return AudioEncoder(size="large", num_classes=num_classes)
+    else:
+        raise ValueError(f"Unknown audio backbone: {name}")
+
+
+# -----------------------------------------------------
+# Video Backbone Loader
+# -----------------------------------------------------
+def build_video_model(name, num_classes):
+    if name == "resnet18":
+        return Video_Encoder("resnet18", pretrain=False, feature_dim=512, num_classes=num_classes)
+    elif name == "resnet34":
+        return Video_Encoder("resnet34", pretrain=False, feature_dim=512, num_classes=num_classes)
+    elif name == "resnet50":
+        return Video_Encoder("resnet50", pretrain=False, feature_dim=2048, num_classes=num_classes)
+    else:
+        raise ValueError(f"Unknown video backbone: {name}")
+
+
+# -----------------------------------------------------
+# Main
+# -----------------------------------------------------
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--data_root", type=str, default="./data/lipread_feature")
+    parser.add_argument("--label_file", type=str, default="./data/selected_words.txt")
+
+    parser.add_argument("--audio_backbone", type=str,
+                        choices=["small", "medium", "large"],
+                        default="medium")
+    parser.add_argument("--video_backbone", type=str,
+                        choices=["resnet18", "resnet34", "resnet50"],
+                        default="resnet18")
+
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--num_workers", type=int, default=16)
+    parser.add_argument("--num_classes", type=int, default=50)
+
+    parser.add_argument("--save_path", type=str, default=None)
+
+    args = parser.parse_args()
+
+    if args.save_path is None:
+        os.makedirs("./checkpoints/fusion", exist_ok=True)
+        args.save_path = f"./checkpoints/fusion/fusion_{args.video_backbone}_{args.audio_backbone}.pth"
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  
-    data_root = '/data/rxhuang/lipread_feature'
-    label_file = './data/selected_words.txt'
 
-
+    # -------------------------------------------------
+    # Transforms
+    # -------------------------------------------------
     train_transform = T.Compose([
         T.ToTensor(),
         T.RandomCrop((88, 88)),
         T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.2, contrast=0.2),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        T.ColorJitter(0.2, 0.2),
+        T.Normalize([0.485, 0.456, 0.406],
+                    [0.229, 0.224, 0.225]),
     ])
-    
+
     test_transform = transforms.Compose([
         T.ToTensor(),
         T.CenterCrop((88, 88)),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        T.Normalize([0.485, 0.456, 0.406],
+                    [0.229, 0.224, 0.225]),
     ])
 
-    train_dataset = LipreadingDataset(root_dir=data_root, label_file=label_file, mode='train', video_transform=train_transform, sample_cnt=500)
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=32)
-    
-    test_dataset = LipreadingDataset(root_dir=data_root, label_file=label_file, video_transform=test_transform, mode='val')
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=32)
+    # -------------------------------------------------
+    # Dataset
+    # -------------------------------------------------
+    train_dataset = LipreadingDataset(
+        root_dir=args.data_root,
+        label_file=args.label_file,
+        mode="train",
+        video_transform=train_transform,
+        sample_cnt=500,
+    )
 
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size,
+        shuffle=True, num_workers=args.num_workers
+    )
 
-    num_classes = 50  
+    val_dataset = LipreadingDataset(
+        root_dir=args.data_root,
+        label_file=args.label_file,
+        mode="val",
+        video_transform=test_transform,
+    )
 
-    # model_config_video = 18
-    model_config_video = 'ablation'
-    model_config_audio = 'large'
-    model_config_fusion =  str(model_config_video) + '_' + model_config_audio
+    val_loader = DataLoader(
+        val_dataset, batch_size=args.batch_size,
+        shuffle=False, num_workers=args.num_workers
+    )
 
-    print(f"Model Config: Video: ResNet-{model_config_video}")
-    print(f"Model Config: Audio: ResNet-{model_config_audio}")
-    
-    # audio_model = AudioEncoder(size=model_config_audio)
-    audio_model = AudioEncoder(size="medium", num_classes=num_classes)
-    # audio_model = AudioModelLightweightEncoder()
-    # backbone, feat_dim = get_resnet_backbone(f'resnet{model_config_video}', pretrained=True)
-    # video_model = Video_ResNet_P3D_Encoder(backbone, feature_dim=feat_dim)
-    # fusion_model = MultiModalFusion()
-
-    audio_pretrained_dict = torch.load(f'checkpoints/audio/audio_medium.pth')
-    audio_pretrained_dict = {k.replace('module.', ''): v for k, v in audio_pretrained_dict.items()}
-    audio_filtered_dict = {k: v for k, v in audio_pretrained_dict.items() if not k.startswith('fc.')}
-    # video_pretrained_dict = torch.load(f'checkpoints/video_resnet_{model_config_video}.pth')
-    # video_pretrained_dict = {k.replace('module.', ''): v for k, v in video_pretrained_dict.items()}
-    # video_filtered_dict = {k: v for k, v in video_pretrained_dict.items() if not k.startswith('fc.')}
-    
-    
-    # 3D + 3D Models
-    # audio_model = AudioModelBaselineEncoder()
-    # video_model = Video_Classification()
-    # backbone, feat_dim = get_resnet_backbone(f'resnet50', pretrained=False)
-    # video_model = Video_ResNet_Baseline_Encoder(backbone)
-    video_model = Video_Encoder(model='resnet18', pretrain=False, feature_dim=512, num_classes=num_classes)
-    # video_model = Video_ResNet_P3D_Without_Shift(backbone, feature_dim=feat_dim)
+    # -------------------------------------------------
+    # Models
+    # -------------------------------------------------
+    audio_model = build_audio_model(args.audio_backbone, args.num_classes)
+    video_model = build_video_model(args.video_backbone, args.num_classes)
     fusion_model = MultiModalFusion()
-    
-    # audio_pretrained_dict = torch.load(f'checkpoints/baselines/audio_baseline.pth')
-    # audio_filtered_dict = {k: v for k, v in audio_pretrained_dict.items() if not k.startswith('fc.')}
-    # video_pretrained_dict = torch.load(f'checkpoints/baselines/video_resnet50_baseline_scratch.pth')
-    # video_filtered_dict = {k: v for k, v in video_pretrained_dict.items() if not k.startswith('fc.')}
-    video_pretrained_dict = torch.load(f'checkpoints/baselines/model_selection/video_model.pth')
-    video_filtered_dict = {k: v for k, v in video_pretrained_dict.items() if not k.startswith('fc.')}
 
-    audio_model.load_state_dict(audio_filtered_dict, strict=False)
-    video_model.load_state_dict(video_filtered_dict, strict=False)
+    # ---- load pretrained audio ----
+    audio_pre = torch.load(f"checkpoints/audio/audio_{args.audio_backbone}.pth")
+    audio_pre = {k.replace("module.", ""): v for k, v in audio_pre.items()}
+    audio_pre = {k: v for k, v in audio_pre.items() if not k.startswith("fc.")}
+    audio_model.load_state_dict(audio_pre, strict=False)
 
-    models = [audio_model, video_model, fusion_model]
+    # ---- load pretrained video ----
+    video_pre = torch.load(f"checkpoints/video/video_{args.video_backbone}.pth")
+    video_pre = {k: v for k, v in video_pre.items() if not k.startswith("fc.")}
+    video_model.load_state_dict(video_pre, strict=False)
 
+    models = [
+        audio_model.to(device),
+        video_model.to(device),
+        fusion_model.to(device),
+    ]
+
+    # fusion-only optimizer
     optimizer = optim.Adam(fusion_model.parameters(), lr=1e-4, weight_decay=1e-5)
-
-    for i in range(len(models)):
-        models[i] = models[i].to(device)
-        # models[i] = nn.DataParallel(models[i])
-        
-    # **损失函数**
     criterion = nn.CrossEntropyLoss()
 
-    # **学习率调度器**
-    epochs = 100
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-    
-    # 训练
-    # save_path = f"./checkpoints/fusion/fusion_{model_config_fusion}.pth"
-    save_path = f"./checkpoints/baselines/model_selection/fusion_model_2.pth"
-    train(models, train_loader, test_loader, criterion, optimizer, scheduler, device, epochs=epochs, save_path=save_path)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=1e-5
+    )
+
+    # -------------------------------------------------
+    # Train
+    # -------------------------------------------------
+    train(
+        models, train_loader, val_loader, criterion,
+        optimizer, scheduler, device,
+        epochs=args.epochs, save_path=args.save_path
+    )
