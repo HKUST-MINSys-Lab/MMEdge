@@ -6,7 +6,7 @@ To maintain accuracy under this fine-grained design, MMEdge introduces a lightwe
 It further incorporates an adaptive multimodal configuration optimizer that dynamically selects optimal sensing and model configurations under latency constraints, and a cross-modal speculative skipping mechanism that bypasses redundant computations when early predictions reach high confidence.
 MMEdge achieves up to 75.8% reduction in end-to-end latency while maintaining comparable accuracy on multiple public datasets (LRW, NuScenes-QA) and a real-world UAV multimodal testbed, demonstrating its effectiveness for low-latency on-device multimodal perception and reasoning.
 
-✅ Paper: [https://arxiv.org/abs/2510.25327v1](https://arxiv.org/abs/2510.25327v3) \
+✅ Paper: [https://arxiv.org/abs/2510.25327v3](https://arxiv.org/abs/2510.25327v3) \
 ✅ Demo Video: [https://www.youtube.com/watch?v=n36M9ho2z9o](https://www.youtube.com/watch?v=n36M9ho2z9o)
 
 ## System Overview
