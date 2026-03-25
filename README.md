@@ -1,5 +1,7 @@
 # MMEdge: Accelerating On-device Multimodal Inference via Pipelined Sensing and Encoding
-A real-time end-to-end multimodal sensing and inference system.
+This is the repo for SenSys 2026 paper: "MMEdge: Accelerating On-device Multimodal Inference via Pipelined Sensing and Encoding".
+
+## Introduction
 This repository provides the public release of [**MMEdge**](https://arxiv.org/abs/2510.25327v5), a real-time on-device multimodal inference framework based on pipelined sensing and encoding.
 Unlike traditional multimodal systems that wait for complete sensor inputs before inference, MMEdge decomposes data collection and computation into fine-grained sensing and encoding units, enabling fully pipelined and parallel execution across modalities.
 To maintain accuracy under this fine-grained design, MMEdge introduces a lightweight temporal aggregation module that preserves temporal continuity across units.
